@@ -1,0 +1,167 @@
+import browserbotics as bb
+import time, random, math
+
+living_id = None
+box1_id = None
+box2_id = None
+
+WORLD_SIZE = 9
+repeat_count = 0
+
+
+living_temp = 37
+box_temp = 25
+sphere_temp = 25
+
+def setup_world():
+    global living_id, box1_id, box2_id
+
+    bb.addGroundPlane()
+    W = WORLD_SIZE
+    t = 0.05
+    h = 0.3
+
+    bb.createBody("box", halfExtent=[t, W/2, h], position=[-W/2, 0, h], mass=0)
+    bb.createBody("box", halfExtent=[t, W/2, h], position=[ W/2, 0, h], mass=0)
+    bb.createBody("box", halfExtent=[W/2, t, h], position=[0, -W/2, h], mass=0)
+    bb.createBody("box", halfExtent=[W/2, t, h], position=[0,  W/2, h], mass=0)
+
+    box1_id = bb.createBody("box", halfExtent=[0.4,0.4,0.4], position=[2,2,0.4], mass=0)
+    box2_id = bb.createBody("sphere", radius=0.3, position=[-3,1.5,0.3], mass=0)
+
+    living_id = bb.createBody("cylinder",
+        radius=0.3, length=0.9,
+        position=[0,-2.5,0.4],
+        mass=0
+    )
+
+
+def distance(a,b):
+    return math.sqrt((a[0]-b[0])**2 + (a[1]-b[1])**2)
+
+def stop(robot):
+    bb.setJointMotorControl(robot,0,"velocity",targetVelocity=0)
+    bb.setJointMotorControl(robot,1,"velocity",targetVelocity=0)
+
+def forward(robot,speed=8):
+    bb.setJointMotorControl(robot,0,"velocity",targetVelocity=speed)
+    bb.setJointMotorControl(robot,1,"velocity",targetVelocity=speed)
+
+def reverse(robot):
+    bb.setJointMotorControl(robot,0,"velocity",targetVelocity=-7)
+    bb.setJointMotorControl(robot,1,"velocity",targetVelocity=-7)
+    time.sleep(0.6)
+    stop(robot)
+
+def wall_near(pos):
+    x,y = pos[0], pos[1]
+    limit = WORLD_SIZE/2 - 0.6
+    return abs(x)>limit or abs(y)>limit
+
+
+def detect(robot):
+
+    robot_pos = bb.getBasePose(robot)[0]
+
+    living_pos = bb.getBasePose(living_id)[0]
+    box1_pos   = bb.getBasePose(box1_id)[0]
+    box2_pos   = bb.getBasePose(box2_id)[0]
+
+    d_living = distance(robot_pos, living_pos)
+    d_box1   = distance(robot_pos, box1_pos)
+    d_box2   = distance(robot_pos, box2_pos)
+
+    nearest_dist = min(d_living, d_box1, d_box2)
+
+    #  LIVING
+    if nearest_dist == d_living and d_living < 1.5:
+        print(f"🌡 Temp: {living_temp}°C → Living detected")
+        return "living"
+
+    #  NON-LIVING
+    if nearest_dist == d_box1 and d_box1 < 1.0:
+        print(f"🌡 Temp: {box_temp}°C → Non-living detected")
+        return "nonliving"
+
+    if nearest_dist == d_box2 and d_box2 < 1.0:
+        print(f"🌡 Temp: {sphere_temp}°C → Non-living detected")
+        return "nonliving"
+
+    #  WALL
+    if wall_near(robot_pos):
+        print("Wall detected")
+        return "wall"
+
+    return None
+
+
+def sharp_escape(robot,mode):
+    global repeat_count
+
+    direction = random.choice([-1,1])
+    turn_time = 1.3
+
+    if repeat_count>=2:
+        print(" Stuck! U-Turn")
+        turn_time = 2.3
+        repeat_count = 0
+
+    if mode == "nonliving":
+        print("Nonliving → Sharp Turn")
+    else:
+        print("Wall → Sharp Turn")
+
+    bb.setJointMotorControl(robot,0,"velocity",targetVelocity=10*direction)
+    bb.setJointMotorControl(robot,1,"velocity",targetVelocity=-10*direction)
+
+    time.sleep(turn_time)
+    stop(robot)
+
+    forward(robot,9)
+    time.sleep(1.4)
+    stop(robot)
+
+
+setup_world()
+robot = bb.loadURDF("roomba.urdf")
+
+while True:
+
+    forward(robot)
+    time.sleep(0.15)
+
+    mode = detect(robot)
+
+    if mode:
+
+        #  LIVING → SMOOTH TURN ONLY
+        if mode == "living":
+            print(" Living → Smooth Turn")
+
+            stop(robot)
+            forward(robot,4)
+
+            bb.setJointMotorControl(robot,0,"velocity",targetVelocity=6)
+            bb.setJointMotorControl(robot,1,"velocity",targetVelocity=3)
+
+            time.sleep(0.6)
+            stop(robot)
+
+            repeat_count = 0
+
+        #  NON-LIVING
+        elif mode == "nonliving":
+            repeat_count += 1
+            stop(robot)
+            reverse(robot)
+            sharp_escape(robot,mode)
+
+        #  WALL
+        elif mode == "wall":
+            repeat_count += 1
+            stop(robot)
+            reverse(robot)
+            sharp_escape(robot,mode)
+
+    else:
+        repeat_count = 0
